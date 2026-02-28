@@ -6,60 +6,151 @@ from google.oauth2.service_account import Credentials
 from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
 import random
+from PIL import Image, ImageDraw, ImageFont
+import io
 
-st.set_page_config(page_title="IEEE ZC | Python Core Selection", page_icon="⚡", layout="wide")
+# --- CONFIG & THEME ---
+st.set_page_config(page_title="IEEE ZC | Python Core", page_icon="⚡", layout="wide")
 
-# ---------------- PARTICLE BACKGROUND & STYLING ----------------
+# ---------------- ADVANCED CYBER-UI STYLING ----------------
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;700&family=Orbitron:wght@400;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;500&family=Rajdhani:wght@500;700&display=swap');
 
-.stApp { background:black; color:#00F5FF; font-family:'Fira Code', monospace; overflow:hidden; }
+.stApp {
+    background: linear-gradient(135deg, #000000 0%, #050a1a 100%);
+    color: #00F5FF;
+    font-family: 'Rajdhani', sans-serif;
+}
 
-/* TERMINAL */
-.terminal-window {background:#0d1117;border:2px solid #00F5FF;border-radius:10px;padding:20px;box-shadow:0 0 25px rgba(0,245,255,0.3);margin-bottom:20px;}
-.terminal-header {background:#161b22;padding:5px 15px;margin:-20px -20px 15px -20px;border-bottom:1px solid #00F5FF;border-radius:8px 8px 0 0;color:#8892b0;font-size:0.8rem;}
-.terminal-body {color:#00FF88;white-space:pre-wrap; font-size:1.5rem;}
-.cursor {display:inline-block;width:10px;height:20px;background:#00FF88;animation:blink 1s infinite;}
-@keyframes blink {0%,100%{opacity:0}50%{opacity:1}}
+.stApp::before {
+    content: " ";
+    position: fixed;
+    top: 0; left: 0; bottom: 0; right: 0;
+    background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), 
+                linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+    z-index: -1;
+    background-size: 100% 2px, 3px 100%;
+    pointer-events: none;
+}
 
-/* ANSWER BUTTONS */
-.answer-option {border:2px solid #00F5FF; padding:14px; border-radius:8px; margin:6px 0; cursor:pointer; transition:0.3s; font-size:1.4rem; text-align:center; font-weight:bold; background:black;}
-.answer-option:hover {background:#00FF88;color:black; transform:scale(1.05); box-shadow:0 0 25px #00FF88;}
+.header-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: rgba(0,0,0,0.8);
+    border-bottom: 2px solid #00F5FF;
+    margin-bottom: 30px;
+}
 
-/* XP & SKILL BARS */
-.progress-bg {background:#111; height:25px; border-radius:10px; margin-bottom:10px;}
-.progress-bar {background:#00FF88; height:25px; border-radius:10px; transition:width 1s;}
-.skill-bar {background:#FF00FF; height:20px; border-radius:10px; transition:width 1s;}
+.terminal-window {
+    background: rgba(13, 17, 23, 0.9);
+    border: 1px solid #00F5FF;
+    border-radius: 5px;
+    padding: 25px;
+    box-shadow: 0 0 20px rgba(0, 245, 255, 0.2);
+}
+
+@keyframes slideIn {
+    from { opacity: 0; transform: translateX(-20px); }
+    to { opacity: 1; transform: translateX(0); }
+}
+
+.leader-card {
+    background: rgba(0, 245, 255, 0.05);
+    border-left: 5px solid #00F5FF;
+    padding: 15px;
+    margin: 10px 0;
+    border-radius: 0 10px 10px 0;
+    animation: slideIn 0.4s ease-out forwards;
+}
+
+div.stButton > button {
+    width: 100%;
+    background: transparent;
+    color: #00F5FF;
+    border: 1px solid #00F5FF;
+    padding: 15px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    transition: 0.3s;
+}
+
+div.stButton > button:hover {
+    background: #00F5FF;
+    color: black;
+    box-shadow: 0 0 20px #00F5FF;
+}
 </style>
 """, unsafe_allow_html=True)
+
+# ---------------- LOGO HEADER ----------------
+st.markdown('<div class="header-container">', unsafe_allow_html=True)
+try:
+    st.image("IEEE ZC.jpg", width=220)
+except:
+    st.image("https://upload.wikimedia.org/wikipedia/commons/2/21/IEEE_logo.png", width=220)
+st.markdown("<h2 style='color:#00FF88; margin-top:10px;'>CORE SELECTION PROTOCOL</h2>", unsafe_allow_html=True)
+st.markdown('</div>', unsafe_allow_html=True)
+
+# ---------------- SESSION STATE ----------------
+if "started" not in st.session_state:
+    st.session_state.update({
+        "started": False, "q_index": 0, "score": 0, "correct": 0,
+        "skill_map": {"Tracing": 0, "Debug": 0, "Concept": 0, "DS": 0},
+        "start_time": None, "name": "", "complete": False, "data_sent": False
+    })
 
 # ---------------- GOOGLE SHEETS ----------------
 @st.cache_resource
 def connect_sheet():
-    scopes = ["https://www.googleapis.com/auth/spreadsheets","https://www.googleapis.com/auth/drive"]
-    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
-    client = gspread.authorize(creds)
-    sheet_url = st.secrets["private_sheet_url"]
-    return client.open_by_url(sheet_url).sheet1
+    try:
+        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
+        client = gspread.authorize(creds)
+        return client.open_by_url(st.secrets["private_sheet_url"]).sheet1
+    except: return None
 
 def save_result(data):
     sheet = connect_sheet()
-    sheet.append_row(data)
+    if sheet:
+        try:
+            # Convert all elements to strings to avoid serialization issues
+            row = [str(x) for x in data]
+            sheet.append_row(row)
+            return True
+        except: return False
+    return False
 
 def load_leaderboard():
-    try:
-        sheet = connect_sheet()
-        records = sheet.get_all_records()
-        return pd.DataFrame(records)
-    except:
-        return pd.DataFrame()
+    sheet = connect_sheet()
+    if sheet:
+        try:
+            return pd.DataFrame(sheet.get_all_records())
+        except: return pd.DataFrame()
+    return pd.DataFrame()
 
-# ---------------- SESSION ----------------
-if "started" not in st.session_state:
-    st.session_state.update({"started":False, "q_index":0, "score":0, "correct":0,
-                             "skill_map":{"Tracing":0,"Debug":0,"Concept":0,"DS":0},
-                             "start_time":None, "name":"", "complete":False})
+# ---------------- CERTIFICATE GENERATOR ----------------
+def create_certificate(name, xp):
+    img = Image.new('RGB', (1000, 700), color='#050a1a')
+    d = ImageDraw.Draw(img)
+    d.rectangle([20, 20, 980, 680], outline='#00F5FF', width=3)
+    d.rectangle([30, 30, 970, 670], outline='#00F5FF', width=1)
+    for i in range(0, 1000, 50):
+        d.line([i, 0, i, 20], fill='#00F5FF', width=1)
+    
+    d.text((500, 150), "CERTIFICATE OF COGNITION", fill='#00FF88', anchor="mm")
+    d.text((500, 250), "THIS IS TO CERTIFY THAT AGENT", fill='#ffffff', anchor="mm")
+    d.text((500, 350), name.upper(), fill='#00F5FF', anchor="mm")
+    d.text((500, 450), "HAS SUCCESSFULLY CLEARED THE PY-CORE PROTOCOL", fill='#ffffff', anchor="mm")
+    d.text((500, 520), f"FINAL SCORE: {xp} XP", fill='#00FF88', anchor="mm")
+    d.text((500, 620), f"VERIFIED BY IEEE ZC - {datetime.now().strftime('%Y-%m-%d')}", fill='#888888', anchor="mm")
+    
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
 
 # ---------------- QUESTIONS ----------------
 questions = [
@@ -73,7 +164,7 @@ questions = [
     {"type":"Concept","difficulty":3,"q":"What does 'is' check in Python?","options":["Value equality","Reference equality","Type equality","Both"],"answer":"Reference equality"},
     {"type":"Tracing","difficulty":3,"q":"print(bool([]))","options":["True","False"],"answer":"False"},
     {"type":"Debug","difficulty":3,"q":"if True print('Hi')","options":["Error","Hi","True","False"],"answer":"Error"},
-    {"type":"DS","difficulty":3,"q":"Which method adds an item at the end of a list?","options":["add()","append()","insert()","extend()"],"answer":"append"},
+    {"type":"DS","difficulty":3,"q":"Which method adds an item at the end of a list?","options":["add()","append()","insert()","extend()"],"answer":"append()"},
     {"type":"Concept","difficulty":3,"q":"What is Python's GIL?","options":["Global Interpreter Lock","Graphical Interface Library","General Input List","None"],"answer":"Global Interpreter Lock"},
     {"type":"Tracing","difficulty":3,"q":"x = 5\ny = x\nx = 7\nprint(y)","options":["5","7","Error","None"],"answer":"5"},
     {"type":"Debug","difficulty":3,"q":"print('2'+2)","options":["4","'22'","Error","2+2"],"answer":"Error"},
@@ -91,96 +182,121 @@ questions = [
     {"type":"Debug","difficulty":3,"q":"print('Hello' / 2)","options":["Error","Hello2","'Hello2'","None"],"answer":"Error"}
 ]
 
-# ---------------- HELPERS ----------------
-def terminal_print(code, title="Python 3.10 Interpreter"):
-    st.markdown(f"""
-    <div class="terminal-window">
-        <div class="terminal-header">● ● ● {title}</div>
-        <div class="terminal-body"><code>{code}</code><span class="cursor"></span></div>
-    </div>
-    """, unsafe_allow_html=True)
-
-# ---------------- LANDING PAGE ----------------
-if not st.session_state.started and not st.session_state.complete:
-    st.image("IEEE ZC.jpg", width=120, use_container_width =False)  # center by default in Streamlit
-    st.markdown("<h1 style='text-align:center;font-family:Orbitron;color:#00FF88;'>IEEE ZC: CORE SELECTION</h1>", unsafe_allow_html=True)
-    
-    col1, col2 = st.columns([1,1])
-    with col1:
-        name_input = st.text_input("Enter Your Name", placeholder="Agent Name...")
-        st.markdown("<p style='color:#00FF88;'>Prepare to enter the Python Core Selection protocol. Check top 5 leaderboard!</p>", unsafe_allow_html=True)
-        if st.button("🚀 START PROTOCOL"):
-            if name_input:
-                st.session_state.name = name_input
-                st.session_state.started = True
-                st.session_state.start_time = time.time()
-                st.rerun()
-            else:
-                st.warning("Identity Required")
-    with col2:
-        st.markdown("### 🏆 TOP 5 LEADERBOARD")
-        df = load_leaderboard()
-        if not df.empty:
-            df = df.sort_values(by="Score", ascending=False).head(5)
-            for i,row in df.iterrows():
-                st.markdown(f"<div style='padding:8px;border-left:4px solid #00F5FF;margin:4px 0;background:rgba(0,255,136,0.1);display:flex;justify-content:space-between'><b>{row['Name']}</b> <span style='color:#00FF88'>{row['Score']} XP</span></div>", unsafe_allow_html=True)
-
-# ---------------- QUIZ PAGE ----------------
-elif st.session_state.started and not st.session_state.complete:
-    st_autorefresh(interval=1000, key="timer_refresh")
-    elapsed = int(time.time() - st.session_state.start_time)
-    st.markdown(f"<h1 style='text-align:center;font-size:4rem;color:#00FF88;'>⏱ {elapsed//60:02}:{elapsed%60:02}</h1>", unsafe_allow_html=True)
-
-    q = questions[st.session_state.q_index]
-    terminal_print(q['q'], title=f"TASK {st.session_state.q_index + 1}/25")
-    
-    for opt in q["options"]:
-        if st.button(opt, key=f"opt_{opt}"):
-            correct = opt == q["answer"]
-            if correct:
-                st.session_state.score += 10*q["difficulty"]
-                st.session_state.correct += 1
-                st.session_state.skill_map[q["type"]] += 1
-            if st.session_state.q_index < 24:
-                st.session_state.q_index += 1
-            else:
-                st.session_state.complete = True
-                st.session_state.started = False
-            st.rerun()
-
-# ---------------- RESULT PAGE ----------------
-elif st.session_state.complete:
-    st.image("IEEE ZC.jpg", width=120, use_container_width =False)
-    st.markdown("<h1 style='text-align:center;color:#00FF88'>PROTOCOL SUMMARY</h1>", unsafe_allow_html=True)
-
-    total_time = int(time.time() - st.session_state.start_time)
-    accuracy = round(st.session_state.correct/25*100,2)
-    xp = st.session_state.score + accuracy
-    max_xp = 500
-
-    # XP Meter
-    st.markdown("<h3 style='color:#00FF88'>XP METER</h3>", unsafe_allow_html=True)
-    st.markdown(f"<div class='progress-bg'><div class='progress-bar' style='width:{min(xp/max_xp*100,100)}%'></div></div>", unsafe_allow_html=True)
-
-    # Skill Bars
-    st.markdown("<h3 style='color:#FF00FF'>SKILL MAPPING</h3>", unsafe_allow_html=True)
-    for skill,value in st.session_state.skill_map.items():
-        st.markdown(f"{skill}: {value}")
-        st.markdown(f"<div class='progress-bg'><div class='skill-bar' style='width:{value*10}%'></div></div>", unsafe_allow_html=True)
-
-    # Full Leaderboard
-    st.markdown("<h3 style='color:#00FF88'>🏆 FULL LEADERBOARD</h3>", unsafe_allow_html=True)
+# ---------------- LEADERBOARD COMPONENT ----------------
+def show_leaderboard(limit=5):
     df = load_leaderboard()
     if not df.empty:
-        df = df.sort_values(by="Score", ascending=False)
-        for i,row in df.iterrows():
-            st.markdown(f"<div style='padding:8px;border-left:4px solid #00F5FF;margin:4px 0;background:rgba(0,255,136,0.1);display:flex;justify-content:space-between'><b>{row['Name']}</b> <span>Score:{row['Score']} | Acc:{row['Accuracy']}% | Debug:{row['Debug']} Tracing:{row['Tracing']} Concept:{row['Concept']} DS:{row['DS']} | XP:{row['XP']}</span></div>", unsafe_allow_html=True)
+        df = df.sort_values(by="XP", ascending=False).head(limit)
+        for i, row in enumerate(df.iterrows()):
+            r = row[1]
+            rank = i + 1
+            color = "#FFD700" if rank == 1 else "#C0C0C0" if rank == 2 else "#CD7F32" if rank == 3 else "#00F5FF"
+            st.markdown(f"""
+                <div class="leader-card" style="border-left-color: {color};">
+                    <div style="display: flex; justify-content: space-between;">
+                        <span><b style="color:{color}">#{rank:02}</b> {r['Name']}</span>
+                        <span style="color:#00FF88">{r['XP']} XP</span>
+                    </div>
+                </div>
+            """, unsafe_allow_html=True)
 
-    save_result([st.session_state.name, st.session_state.score, accuracy, total_time,
-                 st.session_state.skill_map["Debug"], st.session_state.skill_map["Tracing"],
-                 st.session_state.skill_map["Concept"], st.session_state.skill_map["DS"],
-                 xp, "", str(datetime.now())])
+# ---------------- NAVIGATION ----------------
+if not st.session_state.started and not st.session_state.complete:
+    t1, t2 = st.tabs(["PROTOCOL ENTRY", "HALL OF FAME"])
+    with t1:
+        c1, c2, c3 = st.columns([1,2,1])
+        with c2:
+            st.markdown("<h3 style='text-align:center;'>IDENTITY AUTHENTICATION</h3>", unsafe_allow_html=True)
+            name = st.text_input("CODENAME", placeholder="Enter your name...")
+            if st.button("START SEQUENCE"):
+                if name:
+                    st.session_state.name = name
+                    st.session_state.started = True
+                    st.session_state.start_time = time.time()
+                    st.rerun()
+                else: st.warning("Identification Required")
+    with t2:
+        show_leaderboard(10)
 
-    if st.button("🔁 RESTART"):
-        for k in list(st.session_state.keys()): del st.session_state[k]
-        st.rerun()
+elif st.session_state.started:
+    st_autorefresh(interval=1000, key="timer")
+    elapsed = int(time.time() - st.session_state.start_time)
+    
+    st.markdown(f"<h1 style='text-align:center; color:#00FF88;'>{elapsed//60:02}:{elapsed%60:02}</h1>", unsafe_allow_html=True)
+    st.progress(st.session_state.q_index / len(questions))
+    
+    q = questions[st.session_state.q_index]
+    
+    # SAFE DISPLAY FOR CODE (No f-string backslash error)
+    st.markdown('<div class="terminal-window">', unsafe_allow_html=True)
+    st.markdown(f'<div style="color:#888; font-size:0.8rem; margin-bottom:10px;">>> TASK_{st.session_state.q_index+1}/{len(questions)}</div>', unsafe_allow_html=True)
+    st.code(q['q'], language='python')
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    st.write("")
+    cols = st.columns(2)
+    for idx, opt in enumerate(q['options']):
+        with cols[idx%2]:
+            if st.button(opt, key=f"ans_{idx}"):
+                if opt == q['answer']:
+                    st.session_state.score += 10 * q['difficulty']
+                    st.session_state.correct += 1
+                    st.session_state.skill_map[q['type']] += 1
+                
+                if st.session_state.q_index < len(questions) - 1:
+                    st.session_state.q_index += 1
+                else:
+                    # AUTOMATIC SAVE BEFORE SWITCHING TO COMPLETE
+                    acc = round(st.session_state.correct / len(questions) * 100, 2)
+                    final_xp = st.session_state.score + acc
+                    save_result([
+                        st.session_state.name, st.session_state.score, acc, 
+                        int(time.time() - st.session_state.start_time),
+                        st.session_state.skill_map["Debug"], st.session_state.skill_map["Tracing"],
+                        st.session_state.skill_map["Concept"], st.session_state.skill_map["DS"],
+                        final_xp, "", str(datetime.now())
+                    ])
+                    st.session_state.complete = True
+                    st.session_state.started = False
+                st.rerun()
+
+elif st.session_state.complete:
+    st.markdown("<h1 style='text-align:center;'>MISSION SUMMARY</h1>", unsafe_allow_html=True)
+    
+    accuracy = round(st.session_state.correct / len(questions) * 100, 2)
+    total_time = int(time.time() - st.session_state.start_time)
+    xp = st.session_state.score + accuracy
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown(f"### AGENT: {st.session_state.name}")
+        st.metric("FINAL XP", f"{xp}")
+        st.metric("ACCURACY", f"{accuracy}%")
+        st.write(f"⏱ Time: {total_time}s")
+        st.markdown("<p style='color:#00FF88;'>✅ DATA ARCHIVED AUTOMATICALLY</p>", unsafe_allow_html=True)
+        
+        if xp >= 400:
+            st.success("🏆 ELITE STATUS CONFIRMED")
+            cert_bytes = create_certificate(st.session_state.name, xp)
+            st.download_button(
+                label="💾 DOWNLOAD CORE CERTIFICATE",
+                data=cert_bytes,
+                file_name=f"IEEE_Core_{st.session_state.name}.png",
+                mime="image/png"
+            )
+        else:
+            st.info("Score 400+ XP to unlock the Elite Certificate.")
+            
+        if st.button("🔁 RESTART PROTOCOL"):
+            for k in list(st.session_state.keys()): del st.session_state[k]
+            st.rerun()
+
+    with c2:
+        st.markdown("### NEURAL PROFILE")
+        for skill, val in st.session_state.skill_map.items():
+            st.write(f"{skill}")
+            st.progress(val / 7 if val < 7 else 1.0)
+
+    st.markdown("---")
+    st.markdown("<h3 style='text-align:center; color:#00F5FF;'>🏆 SECTOR RANKINGS</h3>", unsafe_allow_html=True)
+    show_leaderboard(100)
