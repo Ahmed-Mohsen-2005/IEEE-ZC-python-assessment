@@ -6,7 +6,8 @@ from google.oauth2.service_account import Credentials
 from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
 import random
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
+import io
 import base64
 import os
 
@@ -24,6 +25,7 @@ st.markdown("""
     font-family: 'Rajdhani', sans-serif;
 }
 
+/* CRT Scanline & Background Glow */
 .stApp::before {
     content: " ";
     position: fixed; top: 0; left: 0; bottom: 0; right: 0;
@@ -52,6 +54,7 @@ st.markdown("""
     padding: 20px; background: rgba(0,0,0,0.8); border-bottom: 2px solid #00F5FF; margin-bottom: 30px;
 }
 
+/* Question Terminal Rectangle */
 .terminal-window {
     background: rgba(13, 17, 23, 0.95);
     border: 2px solid #00F5FF;
@@ -65,11 +68,18 @@ st.markdown("""
     font-size: 5.5rem; font-weight: 900; color: #00FF88;
     text-align: center; margin: 10px 0;
     text-shadow: 0 0 30px rgba(0, 255, 136, 0.6);
+    font-family: 'Fira Code', monospace;
 }
 
 .leader-card {
     background: rgba(0, 245, 255, 0.03); border-left: 5px solid #00F5FF;
     padding: 18px; margin: 12px 0; border-radius: 4px;
+    transition: 0.3s ease-in-out;
+}
+
+.leader-card:hover {
+    background: rgba(0, 245, 255, 0.12);
+    transform: scale(1.01);
 }
 
 div.stButton > button {
@@ -82,6 +92,10 @@ div.stButton > button:hover {
     background: #00F5FF !important; color: black !important; 
     box-shadow: 0 0 25px #00F5FF;
 }
+
+div.stButton > button:active, div.stButton > button:focus {
+    outline: none !important; border: 1px solid #00F5FF !important; color: #00F5FF !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -91,8 +105,7 @@ def get_img_as_base64(file):
         with open(file, "rb") as f:
             data = f.read()
         return base64.b64encode(data).decode()
-    except: 
-        return None
+    except: return None
 
 img_tag = ""
 if os.path.exists("IEEE ZC.jpg"):
@@ -113,42 +126,34 @@ if "started" not in st.session_state:
     st.session_state.update({
         "started": False, "q_index": 0, "score": 0, "correct": 0,
         "skill_map": {"Tracing": 0, "Debug": 0, "Concept": 0, "DS": 0},
-        "start_time": None, "name": "", "complete": False, "saved": False
+        "start_time": None, "name": "", "complete": False
     })
 
 # ---------------- GOOGLE SHEETS ----------------
 @st.cache_resource
 def connect_sheet():
-    scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     try:
+        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
         client = gspread.authorize(creds)
-        sheet = client.open_by_url(st.secrets["private_sheet_url"]).sheet1
-        return sheet
-    except Exception as e:
-        st.error(f"Google Sheets connection failed: {e}")
-        return None
+        return client.open_by_url(st.secrets["private_sheet_url"]).sheet1
+    except: return None
 
 def save_result(data):
     sheet = connect_sheet()
     if sheet:
         try:
-            sheet.append_row([str(x) for x in data], value_input_option="USER_ENTERED")
+            row = [str(x) for x in data]
+            sheet.append_row(row)
             return True
-        except Exception as e:
-            st.error(f"Failed to write to Google Sheet: {e}")
-            return False
-    else:
-        st.error("Google Sheet not connected")
-        return False
+        except: return False
+    return False
 
 def load_leaderboard():
     sheet = connect_sheet()
     if sheet:
-        try:
-            return pd.DataFrame(sheet.get_all_records())
-        except:
-            return pd.DataFrame()
+        try: return pd.DataFrame(sheet.get_all_records())
+        except: return pd.DataFrame()
     return pd.DataFrame()
 
 # ---------------- QUESTIONS ----------------
@@ -186,13 +191,15 @@ if not st.session_state.started and not st.session_state.complete:
     with t1:
         c1, c2, c3 = st.columns([1,2,1])
         with c2:
+            st.markdown("<h3 style='text-align:center;'>IDENTITY AUTHENTICATION</h3>", unsafe_allow_html=True)
             name = st.text_input("CODENAME", placeholder="Enter Agent Name...")
-            if st.button("START SEQUENCE"):
+            if st.button("INITIALIZE SEQUENCE"):
                 if name:
                     st.session_state.name = name
                     st.session_state.started = True
                     st.session_state.start_time = time.time()
                     st.rerun()
+                else: st.warning("Identification Required")
     with t2:
         df = load_leaderboard()
         if not df.empty:
@@ -201,13 +208,16 @@ if not st.session_state.started and not st.session_state.complete:
                 st.markdown(f'<div class="leader-card">#{i+1:02} {r[1]["Name"]} — {r[1]["XP"]} XP</div>', unsafe_allow_html=True)
 
 elif st.session_state.started:
-    st_autorefresh(interval=1000, key="timer")
+    st_autorefresh(interval=1000, key="timer_pulse")
     elapsed = int(time.time() - st.session_state.start_time)
+    
+    # UI: Timer and Progress
     st.markdown(f"<div class='timer-text'>{elapsed//60:02}:{elapsed%60:02}</div>", unsafe_allow_html=True)
     st.progress(st.session_state.q_index / len(questions))
     
     q = questions[st.session_state.q_index]
     
+    # UI: Terminal Window for Question
     st.markdown(f"""
     <div class="terminal-window" style="padding-top: 10px;">
         <div style="color: #888; font-size: 0.8rem; margin-bottom: 15px; font-family: 'Fira Code', monospace;">
@@ -219,36 +229,54 @@ elif st.session_state.started:
     </div>
     """, unsafe_allow_html=True)
     
+    st.write("") 
+    
+    # Answer Logic
     cols = st.columns(2)
     for idx, opt in enumerate(q['options']):
         with cols[idx % 2]:
             if st.button(opt, key=f"ans_{st.session_state.q_index}_{idx}"):
+                # 1. Update Internal Stats
                 if opt == q['answer']:
                     st.session_state.score += 10 * q['difficulty']
                     st.session_state.correct += 1
                     st.session_state.skill_map[q['type']] += 1
                 
+                # 2. Check if there are more questions
                 if st.session_state.q_index < len(questions) - 1:
                     st.session_state.q_index += 1
                     st.rerun()
                 else:
+                    # 3. MISSION COMPLETE: Prepare and Save Data
                     acc = round(st.session_state.correct / len(questions) * 100, 2)
-                    final_xp = st.session_state.score + acc
                     total_time = int(time.time() - st.session_state.start_time)
+                    final_xp = st.session_state.score + acc
                     
-                    row = [
-                        st.session_state.name, st.session_state.score, acc, 
-                        total_time, st.session_state.skill_map["Debug"], 
-                        st.session_state.skill_map["Tracing"], st.session_state.skill_map["Concept"], 
-                        st.session_state.skill_map["DS"], final_xp, str(datetime.now())
+                    # Row Sequence: Name, Score, Accuracy, Time, Debug, Tracing, Concept, DS, XP, Timestamp
+                    result_payload = [
+                        st.session_state.name,                     
+                        st.session_state.score,                    
+                        acc,                                       
+                        total_time,                                
+                        st.session_state.skill_map.get("Debug", 0),   
+                        st.session_state.skill_map.get("Tracing", 0), 
+                        st.session_state.skill_map.get("Concept", 0), 
+                        st.session_state.skill_map.get("DS", 0),      
+                        final_xp,                                  
+                        datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     ]
                     
-                    with st.spinner("Archiving Neural Profile..."):
-                        save_result(row)
-                        st.session_state.saved = True
-                        st.session_state.complete = True
-                        st.session_state.started = False
-                        st.rerun()
+                    with st.spinner("SYNCHRONIZING WITH CENTRAL DATABASE..."):
+                        success = save_result(result_payload)
+                        if success:
+                            st.toast("Protocol Data Synchronized!", icon="✅")
+                        else:
+                            st.error("Data Sync Failed. Check Connection.")
+                    
+                    # 4. Update State to show Final Screen
+                    st.session_state.complete = True
+                    st.session_state.started = False
+                    st.rerun()
 
 elif st.session_state.complete:
     st.markdown("<h1 style='text-align:center; color:#00FF88; text-shadow:0 0 15px #00FF88;'>MISSION ACCOMPLISHED</h1>", unsafe_allow_html=True)
@@ -261,7 +289,6 @@ elif st.session_state.complete:
         st.markdown(f"### AGENT: {st.session_state.name}")
         st.metric("FINAL XP", f"{xp}")
         st.metric("ACCURACY", f"{accuracy}%")
-        st.success("✅ PROFILE ARCHIVED AUTOMATICALLY")
         if st.button("🔁 RESTART PROTOCOL"):
             for k in list(st.session_state.keys()): del st.session_state[k]
             st.rerun()
@@ -274,11 +301,19 @@ elif st.session_state.complete:
 
     st.divider()
     st.markdown("<h3 style='text-align:center; color:#00F5FF;'>🏆 GLOBAL SECTOR RANKINGS</h3>", unsafe_allow_html=True)
+    
     df_final = load_leaderboard()
     if not df_final.empty:
         df_final = df_final.sort_values(by="XP", ascending=False).head(100)
         for i, row in enumerate(df_final.iterrows()):
             r = row[1]
             rank = i + 1
-            color = "#FFD700" if rank == 1 else "#C0C0C0" if rank == 2 else "#CD7F32" if rank == 3 else "#00F5FF"
-            st.markdown(f'<div class="leader-card" style="border-left-color: {color};">#{rank:02} {r["Name"]} — {r["XP"]} XP</div>', unsafe_allow_html=True)
+            rank_color = "#FFD700" if rank == 1 else "#C0C0C0" if rank == 2 else "#CD7F32" if rank == 3 else "#00F5FF"
+            st.markdown(f"""
+                <div class="leader-card" style="border-left-color: {rank_color};">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span><b style="color:{rank_color}; font-size:1.2rem; margin-right:15px;">#{rank:02}</b> {r['Name']}</span>
+                        <span style="color:#00FF88; font-family: 'Fira Code'; font-weight: bold;">{r['XP']} XP</span>
+                    </div>
+                </div>
+            """, unsafe_allow_html=True)
